@@ -1,0 +1,14 @@
+{
+  "name": "token-pet-tauri",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync-dist.mjs",
+    "dev": "npm run sync && tauri dev",
+    "build": "npm run sync && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^1.6.3"
+  }
+}

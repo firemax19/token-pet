@@ -10,8 +10,8 @@ use std::{
   sync::atomic::{AtomicBool, Ordering},
 };
 use tauri::{
-  AppHandle, CustomMenuItem, Manager, PhysicalPosition, State, SystemTray, SystemTrayEvent,
-  SystemTrayMenu, Window, WindowEvent,
+  AppHandle, CustomMenuItem, LogicalSize, Manager, PhysicalPosition, State, SystemTray,
+  SystemTrayEvent, SystemTrayMenu, Window, WindowEvent,
 };
 
 struct PinState(AtomicBool);
@@ -242,6 +242,17 @@ fn toggle_top(window: Window, state: State<'_, PinState>) -> Result<bool, String
   Ok(next)
 }
 
+#[tauri::command]
+fn set_compact_mode(window: Window, compact: bool) -> Result<(), String> {
+  let size = if compact {
+    LogicalSize::new(192.0, 78.0)
+  } else {
+    LogicalSize::new(192.0, 284.0)
+  };
+
+  window.set_size(size).map_err(|error| error.to_string())
+}
+
 fn main() {
   let show = CustomMenuItem::new("show".to_string(), "Show / Hide");
   let refresh = CustomMenuItem::new("refresh".to_string(), "Refresh");
@@ -260,6 +271,7 @@ fn main() {
       get_stats,
       hide_window,
       start_dragging,
+      set_compact_mode,
       toggle_top
     ])
     .setup(|app| {

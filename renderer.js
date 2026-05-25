@@ -3,13 +3,16 @@ const smallStat = document.getElementById("smallStat");
 const refreshButton = document.getElementById("refreshButton");
 const pinButton = document.getElementById("pinButton");
 const minimizeButton = document.getElementById("minimizeButton");
+const layoutButton = document.getElementById("layoutButton");
 const mascotLayer = document.getElementById("mascotLayer");
+const petCard = document.querySelector(".pet-card");
 const tabButtons = document.querySelectorAll(".tab-btn");
 
 const invoke = window.__TAURI__.tauri.invoke;
 const appWindow = window.__TAURI__.window?.appWindow;
 
 let isPinned = true;
+let isCompact = localStorage.getItem("tokenPetLayout") === "compact";
 let currentPeriod = "today";
 pinButton.classList.add("is-active");
 
@@ -22,6 +25,21 @@ function setPinState(nextPinned) {
   pinButton.classList.toggle("is-active", isPinned);
   pinButton.title = isPinned ? "\u7f6e\u9876\u4e2d" : "\u672a\u7f6e\u9876";
   pinButton.setAttribute("aria-label", pinButton.title);
+}
+
+function setCompactState(nextCompact) {
+  isCompact = nextCompact;
+  petCard.classList.toggle("is-compact", isCompact);
+  layoutButton.classList.toggle("is-active", isCompact);
+  layoutButton.setAttribute("aria-pressed", String(isCompact));
+  layoutButton.title = isCompact ? "\u5207\u6362\u539f\u7248" : "\u5207\u6362\u7d27\u51d1\u7248";
+  layoutButton.setAttribute("aria-label", layoutButton.title);
+  localStorage.setItem("tokenPetLayout", isCompact ? "compact" : "default");
+}
+
+async function applyWindowLayout(nextCompact) {
+  setCompactState(nextCompact);
+  await invoke("set_compact_mode", { compact: isCompact }).catch(() => {});
 }
 
 function loadMascot() {
@@ -81,7 +99,9 @@ pinButton.addEventListener("click", async () => {
   setPinState(Boolean(nextPinned));
 });
 minimizeButton.addEventListener("click", () => invoke("hide_window"));
+layoutButton.addEventListener("click", () => applyWindowLayout(!isCompact));
 
+applyWindowLayout(isCompact);
 setPinState(true);
 loadMascot();
 refreshStats();

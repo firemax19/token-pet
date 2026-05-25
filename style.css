@@ -36,9 +36,7 @@ body {
     linear-gradient(157deg, rgba(12, 35, 78, 0.98), rgba(5, 19, 37, 0.985) 58%, rgba(2, 12, 24, 0.99));
   box-shadow:
     0 0 0 1px rgba(89, 232, 255, 0.38) inset,
-    0 0 12px rgba(67, 234, 255, 0.98),
-    0 0 30px rgba(107, 82, 255, 0.45),
-    0 18px 32px rgba(0, 0, 0, 0.36);
+    0 0 10px rgba(67, 234, 255, 0.28) inset;
   backdrop-filter: blur(14px) saturate(1.3);
 }
 
@@ -301,9 +299,7 @@ body {
     linear-gradient(160deg, rgba(4, 22, 45, 0.99), rgba(5, 20, 40, 0.99) 55%, rgba(2, 10, 23, 0.995));
   box-shadow:
     0 0 0 1px rgba(89, 232, 255, 0.48) inset,
-    0 0 10px rgba(67, 234, 255, 0.92),
-    0 0 20px rgba(107, 82, 255, 0.34),
-    0 9px 16px rgba(0, 0, 0, 0.34);
+    0 0 8px rgba(67, 234, 255, 0.24) inset;
 }
 
 .pet-card.is-compact::before {

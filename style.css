@@ -126,7 +126,6 @@ body {
   pointer-events: none;
 }
 
-.label,
 .sub-row {
   color: rgba(239, 248, 255, 0.9);
   font-size: 12px;
@@ -135,16 +134,60 @@ body {
   text-shadow: 0 0 10px rgba(105, 238, 255, 0.25);
 }
 
+.token-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .token-value {
-  margin-top: 6px;
   color: var(--cyan);
-  font-size: 30px;
+  font-size: 26px;
   font-weight: 800;
   line-height: 1;
   letter-spacing: 0;
   text-shadow:
     0 0 10px rgba(82, 246, 255, 0.7),
     0 0 20px rgba(82, 246, 255, 0.28);
+}
+
+.token-label {
+  color: rgba(239, 248, 255, 0.9);
+  font-size: 11px;
+  font-weight: 700;
+  text-shadow: 0 0 10px rgba(105, 238, 255, 0.25);
+}
+
+.tab-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  pointer-events: auto;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 4px 0;
+  border: 1px solid rgba(82, 246, 255, 0.4);
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(213, 237, 246, 0.6);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.tab-btn:hover {
+  color: rgba(213, 237, 246, 0.9);
+  border-color: rgba(82, 246, 255, 0.7);
+}
+
+.tab-btn.active {
+  background: rgba(82, 246, 255, 0.15);
+  color: var(--cyan);
+  border-color: var(--cyan);
+  box-shadow: 0 0 8px rgba(82, 246, 255, 0.4);
 }
 
 .sub-row {
@@ -194,7 +237,7 @@ body {
   z-index: 3;
   left: 14px;
   right: 14px;
-  bottom: 14px;
+  bottom: 0;
   height: 102px;
   overflow: hidden;
   pointer-events: none;
@@ -205,7 +248,7 @@ body {
   position: absolute;
   left: 20px;
   right: 20px;
-  bottom: 4px;
+  bottom: 0;
   height: 18px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.28);
@@ -215,7 +258,7 @@ body {
 .mascot-layer {
   position: absolute;
   left: 6px;
-  bottom: -48px;
+  bottom: -52px;
   width: 142px;
   height: auto;
   filter:
@@ -227,7 +270,7 @@ body {
   position: absolute;
   left: 10px;
   right: 10px;
-  bottom: 12px;
+  bottom: 0;
   height: 5px;
   border-radius: 999px;
   background: linear-gradient(90deg, #2df5ff, #8f68ff, #ff6bf1);

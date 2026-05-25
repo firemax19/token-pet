@@ -4,11 +4,13 @@ const refreshButton = document.getElementById("refreshButton");
 const pinButton = document.getElementById("pinButton");
 const minimizeButton = document.getElementById("minimizeButton");
 const mascotLayer = document.getElementById("mascotLayer");
+const tabButtons = document.querySelectorAll(".tab-btn");
 
 const invoke = window.__TAURI__.tauri.invoke;
 const appWindow = window.__TAURI__.window?.appWindow;
 
 let isPinned = true;
+let currentPeriod = "today";
 pinButton.classList.add("is-active");
 
 function formatCost(value) {
@@ -32,7 +34,7 @@ function loadMascot() {
 
 async function refreshStats() {
   try {
-    const stats = await invoke("get_stats");
+    const stats = await invoke("get_stats", { period: currentPeriod });
     tokenValue.textContent = stats.totalTokensText;
     smallStat.innerHTML = `${stats.requestCount} \u6b21\u8bf7\u6c42&nbsp;&nbsp;${formatCost(stats.totalCostUsd)}<br>${Math.round(stats.successRate)}% \u6210\u529f`;
     refreshButton.classList.add("is-pulsing");
@@ -47,7 +49,7 @@ window.refreshStats = refreshStats;
 
 async function startWindowDrag(event) {
   if (event.button !== 0) return;
-  if (event.target.closest(".tools, button")) return;
+  if (event.target.closest(".tools, button, .tab-btn")) return;
 
   event.preventDefault();
 
@@ -66,6 +68,14 @@ async function startWindowDrag(event) {
 document.addEventListener("mousedown", startWindowDrag, true);
 
 refreshButton.addEventListener("click", refreshStats);
+tabButtons.forEach(btn => {
+  btn.addEventListener("click", () => {
+    tabButtons.forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentPeriod = btn.dataset.period;
+    refreshStats();
+  });
+});
 pinButton.addEventListener("click", async () => {
   const nextPinned = await invoke("toggle_top");
   setPinState(Boolean(nextPinned));

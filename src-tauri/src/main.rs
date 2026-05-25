@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use chrono::{Local, NaiveTime};
+use chrono::Local;
 use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -99,32 +99,30 @@ fn format_tokens(value: i64) -> String {
   }
 }
 
-fn today_bounds() -> Result<(i64, i64), String> {
-  let today = Local::now().date_naive();
-  let start = today.and_time(NaiveTime::MIN);
-  let end = start + chrono::Duration::days(1);
-  let start_ts = start
-    .and_local_timezone(Local)
-    .single()
-    .ok_or_else(|| "failed to resolve local start time".to_string())?
-    .timestamp();
-  let end_ts = end
-    .and_local_timezone(Local)
-    .single()
-    .ok_or_else(|| "failed to resolve local end time".to_string())?
-    .timestamp()
-    - 1;
+fn period_bounds(period: &str) -> Result<(i64, i64), String> {
+  let now = Local::now();
+  let end_ts = now.timestamp();
+
+  let days = match period {
+    "7d" => 7,
+    "30d" => 30,
+    _ => 1, // today
+  };
+
+  let start = now - chrono::Duration::days(days);
+  let start_ts = start.timestamp();
+
   Ok((start_ts, end_ts))
 }
 
 #[tauri::command]
-fn get_stats() -> Result<UsageStats, String> {
+fn get_stats(period: String) -> Result<UsageStats, String> {
   let db_path = find_db();
   if !db_path.exists() {
     return Err(format!("cc-switch db not found: {}", db_path.display()));
   }
 
-  let (start_ts, end_ts) = today_bounds()?;
+  let (start_ts, end_ts) = period_bounds(&period)?;
   let conn = Connection::open_with_flags(
     &db_path,
     OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,

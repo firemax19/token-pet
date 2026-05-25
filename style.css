@@ -320,12 +320,12 @@ body {
 }
 
 .pet-card.is-compact .tools {
-  gap: 5px;
+  gap: 6px;
 }
 
 .pet-card.is-compact .tool {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
 }
 
 .pet-card.is-compact .tool.minimize {
@@ -366,7 +366,7 @@ body {
 }
 
 .pet-card.is-compact .token-value {
-  font-size: 28px;
+  font-size: 25px;
   letter-spacing: 0;
 }
 
@@ -375,12 +375,7 @@ body {
 }
 
 .pet-card.is-compact .sub-row {
-  grid-column: 1 / span 2;
-  grid-row: 3;
-  gap: 5px;
-  margin: 0;
-  align-self: start;
-  font-size: 8px;
+  display: none;
 }
 
 .pet-card.is-compact .wave {

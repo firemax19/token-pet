@@ -106,11 +106,20 @@ fn period_bounds(period: &str) -> Result<(i64, i64), String> {
   let days = match period {
     "7d" => 7,
     "30d" => 30,
-    _ => 1, // today
+    _ => 0, // today: 0 days ago = today 00:00
   };
 
-  let start = now - chrono::Duration::days(days);
-  let start_ts = start.timestamp();
+  let start = if days == 0 {
+    // today: start from today 00:00
+    now.date_naive().and_hms_opt(0, 0, 0).unwrap()
+  } else {
+    // 7d/30d: go back by days, then to 00:00
+    (now.date_naive() - chrono::Duration::days(days)).and_hms_opt(0, 0, 0).unwrap()
+  };
+
+  let start_ts = start.and_local_timezone(Local).single()
+    .ok_or_else(|| "failed to resolve local start time".to_string())?
+    .timestamp();
 
   Ok((start_ts, end_ts))
 }

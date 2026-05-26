@@ -117,6 +117,15 @@ body {
   fill: currentColor;
 }
 
+@keyframes spin360 {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.tool.refresh.is-spinning svg {
+  animation: spin360 300ms ease-out forwards;
+}
+
 .tool .icon-expanded {
   display: none;
 }
@@ -159,6 +168,17 @@ body {
   text-shadow:
     0 0 10px rgba(82, 246, 255, 0.7),
     0 0 20px rgba(82, 246, 255, 0.28);
+  transition: transform 150ms ease;
+}
+
+.token-value.animating {
+  animation: tokenPop 300ms ease;
+}
+
+@keyframes tokenPop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1); }
 }
 
 .token-label {

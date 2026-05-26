@@ -53,10 +53,22 @@ function loadMascot() {
 async function refreshStats() {
   try {
     const stats = await invoke("get_stats", { period: currentPeriod });
-    tokenValue.textContent = stats.totalTokensText;
+    const oldValue = tokenValue.textContent;
+    const newValue = stats.totalTokensText;
+
+    // Spin refresh icon
+    refreshButton.classList.add("is-spinning");
+    window.setTimeout(() => refreshButton.classList.remove("is-spinning"), 300);
+
+    // Update values
+    tokenValue.textContent = newValue;
     smallStat.innerHTML = `${stats.requestCount} \u6b21\u8bf7\u6c42&nbsp;&nbsp;${formatCost(stats.totalCostUsd)}<br>${Math.round(stats.successRate)}% \u6210\u529f`;
-    refreshButton.classList.add("is-pulsing");
-    window.setTimeout(() => refreshButton.classList.remove("is-pulsing"), 220);
+
+    // Animate token value if changed
+    if (oldValue !== newValue) {
+      tokenValue.classList.add("animating");
+      window.setTimeout(() => tokenValue.classList.remove("animating"), 300);
+    }
   } catch (error) {
     tokenValue.textContent = "0";
     smallStat.textContent = "\u8bfb\u53d6\u5931\u8d25";

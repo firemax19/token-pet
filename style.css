@@ -441,3 +441,113 @@ body {
   right: 10px;
   height: 3px;
 }
+
+.pet-card.is-edge-docked {
+  width: 49px;
+  height: 129px;
+  margin: 2px 0;
+  border-radius: 11px;
+  box-shadow:
+    0 0 0 1px rgba(89, 232, 255, 0.5) inset,
+    0 0 9px rgba(67, 234, 255, 0.3) inset,
+    0 8px 20px rgba(3, 16, 32, 0.28);
+}
+
+.pet-card.is-edge-docked[data-edge="left"] {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.pet-card.is-edge-docked[data-edge="right"] {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.pet-card.is-edge-docked .chrome {
+  display: none;
+}
+
+.pet-card.is-edge-docked .tools {
+  display: none;
+}
+
+.pet-card.is-edge-docked .tool {
+  display: none;
+}
+
+.pet-card.is-edge-docked .tool:not(.layout) {
+  display: none;
+}
+
+.pet-card.is-edge-docked .content {
+  position: absolute;
+  inset: 12px 0 41px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 100%;
+  height: auto;
+}
+
+.pet-card.is-edge-docked .tab-row,
+.pet-card.is-edge-docked .sub-row,
+.pet-card.is-edge-docked .small-stat {
+  display: none;
+}
+
+.pet-card.is-edge-docked .token-row {
+  position: absolute;
+  left: 50%;
+  top: 41%;
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  width: max-content;
+  transform: rotate(90deg);
+  transform-origin: center;
+  translate: -50% -50%;
+}
+
+.pet-card.is-edge-docked .token-value {
+  font-size: 15px;
+}
+
+.pet-card.is-edge-docked .token-label {
+  font-size: 6px;
+}
+
+.pet-card.is-edge-docked .mascot-panel {
+  left: 3px;
+  right: 3px;
+  bottom: 5px;
+  height: 34px;
+}
+
+.pet-card.is-edge-docked .mascot-stage {
+  left: 4px;
+  right: auto;
+  bottom: 0;
+  width: 42px;
+  height: 46px;
+  overflow: hidden;
+}
+
+.pet-card.is-edge-docked .mascot-stage::before {
+  left: 6px;
+  right: 6px;
+  bottom: 0;
+  height: 6px;
+}
+
+.pet-card.is-edge-docked .mascot-layer {
+  left: 0;
+  bottom: -7px;
+  width: 42px;
+}
+
+.pet-card.is-edge-docked .bottom-neon {
+  left: 8px;
+  right: 8px;
+  height: 2px;
+}

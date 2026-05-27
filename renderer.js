@@ -13,6 +13,14 @@ const appWindow = window.__TAURI__.window?.appWindow;
 
 let isPinned = true;
 let isCompact = localStorage.getItem("tokenPetLayout") === "compact";
+let isEdgeDocked = false;
+let edgeDockSide = null;
+let collapseTimer = 0;
+let moveSettleTimer = 0;
+let suppressMoveSettleUntil = 0;
+let dragFinalizeTimer = 0;
+let manualDrag = null;
+let dragMoveFrame = 0;
 let currentPeriod = "today";
 pinButton.classList.add("is-active");
 
@@ -37,9 +45,32 @@ function setCompactState(nextCompact) {
   localStorage.setItem("tokenPetLayout", isCompact ? "compact" : "default");
 }
 
+function setEdgeDockState(docked, edge = null) {
+  isEdgeDocked = docked;
+  edgeDockSide = docked ? edge : null;
+  petCard.classList.toggle("is-edge-docked", isEdgeDocked);
+  petCard.classList.remove("is-hover-expanded");
+  if (edgeDockSide) {
+    petCard.dataset.edge = edgeDockSide;
+  } else {
+    delete petCard.dataset.edge;
+  }
+}
+
+window.applyEdgeDockFromHost = (edge) => {
+  setEdgeDockState(true, edge || "right");
+};
+
+window.applyEdgeUndockFromHost = () => {
+  setEdgeDockState(false);
+};
+
 async function applyWindowLayout(nextCompact) {
   setCompactState(nextCompact);
-  await invoke("set_compact_mode", { compact: isCompact }).catch(() => {});
+  if (!isEdgeDocked) {
+    suppressMoveSettle();
+    await invoke("set_compact_mode", { compact: isCompact }).catch(() => {});
+  }
 }
 
 function loadMascot() {
@@ -77,25 +108,91 @@ async function refreshStats() {
 
 window.refreshStats = refreshStats;
 
+function finalizeEdgeDrag() {
+  window.clearTimeout(dragFinalizeTimer);
+  manualDrag = null;
+  invoke("finish_edge_drag")
+    .then((state) => setEdgeDockState(Boolean(state.docked), state.edge || null))
+    .catch(() => {});
+}
+
 async function startWindowDrag(event) {
-  if (event.button !== 0) return;
+  if (event.button !== 0 && event.pointerType !== "touch") return;
   if (event.target.closest(".tools, button, .tab-btn")) return;
 
   event.preventDefault();
+  window.clearTimeout(collapseTimer);
+  event.target.setPointerCapture?.(event.pointerId);
 
-  try {
-    if (appWindow?.startDragging) {
-      await appWindow.startDragging();
-      return;
-    }
-  } catch (_) {
-    // Fall back to the Rust command below.
+  manualDrag = {
+    pointerId: event.pointerId,
+    offsetX: event.clientX,
+    offsetY: event.clientY,
+    screenX: event.screenX,
+    screenY: event.screenY,
+  };
+
+  if (isEdgeDocked && edgeDockSide) {
+    suppressMoveSettle();
+    invoke("begin_edge_drag", {
+      cursorOffsetX: event.clientX,
+      cursorOffsetY: event.clientY,
+      screenX: event.screenX,
+      compact: isCompact,
+      dockedEdge: edgeDockSide,
+    }).catch(() => {});
+  } else {
+    invoke("begin_edge_drag", {
+      cursorOffsetX: event.clientX,
+      cursorOffsetY: event.clientY,
+      screenX: event.screenX,
+      compact: isCompact,
+      dockedEdge: null,
+    }).catch(() => {});
   }
-
-  await invoke("start_dragging").catch(() => {});
 }
 
-document.addEventListener("mousedown", startWindowDrag, true);
+function moveManualDrag(event) {
+  if (!manualDrag || event.pointerId !== manualDrag.pointerId) return;
+  manualDrag.screenX = event.screenX;
+  manualDrag.screenY = event.screenY;
+  if (dragMoveFrame) return;
+  dragMoveFrame = window.requestAnimationFrame(() => {
+    dragMoveFrame = 0;
+    if (!manualDrag) return;
+    invoke("drag_move_window", {
+      screenX: manualDrag.screenX,
+      screenY: manualDrag.screenY,
+      cursorOffsetX: manualDrag.offsetX,
+      cursorOffsetY: manualDrag.offsetY,
+    }).catch(() => {});
+  });
+}
+
+document.addEventListener("pointerdown", startWindowDrag, true);
+document.addEventListener("pointermove", moveManualDrag, true);
+document.addEventListener("pointerup", finalizeEdgeDrag, true);
+document.addEventListener("pointercancel", finalizeEdgeDrag, true);
+window.addEventListener("blur", () => {
+  dragFinalizeTimer = window.setTimeout(finalizeEdgeDrag, 120);
+});
+
+function suppressMoveSettle(duration = 260) {
+  suppressMoveSettleUntil = Date.now() + duration;
+}
+
+function scheduleEdgeDockSettle(delay = 180) {
+  window.clearTimeout(moveSettleTimer);
+  moveSettleTimer = window.setTimeout(() => {
+    if (Date.now() < suppressMoveSettleUntil) return;
+    settleEdgeDock();
+  }, delay);
+}
+
+async function settleEdgeDock() {
+  const state = await invoke("settle_edge_dock").catch(() => ({ docked: false, edge: null }));
+  setEdgeDockState(Boolean(state.docked), state.edge || null);
+}
 
 refreshButton.addEventListener("click", refreshStats);
 tabButtons.forEach(btn => {

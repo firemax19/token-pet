@@ -450,6 +450,10 @@ fn add_claude_usage(
     };
     let cache_read_tokens = int_field(usage, "cache_read_input_tokens");
     let output_tokens = int_field(usage, "output_tokens");
+    if input_tokens + cache_creation_tokens + cache_read_tokens + output_tokens == 0 {
+        return;
+    }
+
     let key = if id.is_empty() {
         format!("{ts}:{input_tokens}:{cache_creation_tokens}:{cache_read_tokens}:{output_tokens}")
     } else {

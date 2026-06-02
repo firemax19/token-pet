@@ -215,3 +215,9 @@ setPinState(true);
 loadMascot();
 refreshStats();
 setInterval(refreshStats, 30000);
+
+// --- Right-click: show popup menu window at cursor ---
+document.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  invoke("show_context_menu", { x: e.screenX, y: e.screenY });
+});

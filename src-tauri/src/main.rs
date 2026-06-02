@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env, fs,
     io::{BufRead, BufReader},
     path::PathBuf,
@@ -24,6 +24,10 @@ use tauri::{
 struct PinState(AtomicBool);
 struct DataSourceState(Mutex<DataSource>);
 struct EdgeRuntimeState(Mutex<EdgeRuntime>);
+struct StatsCache {
+    local: Mutex<HashMap<String, (Instant, UsageStats)>>,
+    ccswitch: Mutex<HashMap<String, (Instant, UsageStats)>>,
+}
 
 const EXPANDED_SIZE: (f64, f64) = (192.0, 284.0);
 const COMPACT_SIZE: (f64, f64) = (192.0, 78.0);
@@ -33,6 +37,7 @@ const EDGE_CURSOR_SNAP_DISTANCE: i32 = 8;
 const SCREEN_PADDING: i32 = 8;
 const EDGE_MOVE_SUPPRESS_MS: u64 = 900;
 const EDGE_MOVE_SETTLE_MS: u64 = 180;
+const STATS_CACHE_TTL_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DataSource {
@@ -50,7 +55,7 @@ struct UsageTotals {
     success_count: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UsageStats {
     db_path: String,
@@ -144,6 +149,13 @@ fn set_data_source(app: &AppHandle, next: DataSource) {
     }
     update_source_menu(app, next);
     refresh_window(app);
+    if let Some(menu_win) = app.get_window("context_menu") {
+        let src_str = match next {
+            DataSource::LocalLogs => "local",
+            DataSource::CcSwitch => "ccswitch",
+        };
+        let _ = menu_win.eval(&format!("window.updateMarkers(\"{src_str}\")"));
+    }
 }
 
 fn find_db() -> PathBuf {
@@ -814,16 +826,39 @@ fn edge_from_cursor_or_window(
 }
 
 #[tauri::command]
-fn get_stats(period: String, source: State<'_, DataSourceState>) -> Result<UsageStats, String> {
+fn get_stats(
+    period: String,
+    source: State<'_, DataSourceState>,
+    cache: State<'_, StatsCache>,
+) -> Result<UsageStats, String> {
     let data_source = *source
         .0
         .lock()
         .map_err(|_| "failed to lock data source".to_string())?;
 
-    match data_source {
+    let cache_map = match data_source {
+        DataSource::LocalLogs => &cache.local,
+        DataSource::CcSwitch => &cache.ccswitch,
+    };
+
+    if let Ok(map) = cache_map.lock() {
+        if let Some((ts, stats)) = map.get(&period) {
+            if ts.elapsed().as_secs() < STATS_CACHE_TTL_SECS {
+                return Ok(stats.clone());
+            }
+        }
+    }
+
+    let stats = match data_source {
         DataSource::LocalLogs => get_local_log_stats(&period),
         DataSource::CcSwitch => get_ccswitch_stats(&period),
+    }?;
+
+    if let Ok(mut map) = cache_map.lock() {
+        map.insert(period, (Instant::now(), stats.clone()));
     }
+
+    Ok(stats)
 }
 
 #[tauri::command]
@@ -1098,6 +1133,90 @@ fn expand_edge_dock(
     Ok(())
 }
 
+#[tauri::command]
+fn set_data_source_cmd(app: AppHandle, source: String) -> Result<(), String> {
+    match source.as_str() {
+        "local" => {
+            set_data_source(&app, DataSource::LocalLogs);
+            Ok(())
+        }
+        "ccswitch" => {
+            set_data_source(&app, DataSource::CcSwitch);
+            Ok(())
+        }
+        _ => Err(format!("unknown source: {source}")),
+    }
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+fn refresh_cmd(app: AppHandle) {
+    refresh_window(&app);
+}
+
+#[tauri::command]
+fn close_menu_cmd(app: AppHandle) {
+    if let Some(w) = app.get_window("context_menu") {
+        let _ = w.hide();
+        let _ = w.close();
+    }
+}
+
+#[tauri::command]
+fn menu_action(app: AppHandle, action: String) {
+    match action.as_str() {
+        "refresh" => refresh_window(&app),
+        "source_local" => set_data_source(&app, DataSource::LocalLogs),
+        "source_ccswitch" => set_data_source(&app, DataSource::CcSwitch),
+        "quit" => app.exit(0),
+        _ => {}
+    }
+    if let Some(w) = app.get_window("context_menu") {
+        let _ = w.hide();
+        let _ = w.close();
+    }
+}
+
+#[tauri::command]
+async fn show_context_menu(window: Window, x: f64, y: f64) {
+    let app = window.app_handle();
+    let source = app
+        .state::<DataSourceState>()
+        .0
+        .lock()
+        .map(|s| *s)
+        .unwrap_or(DataSource::LocalLogs);
+    let src_str = match source {
+        DataSource::LocalLogs => "local",
+        DataSource::CcSwitch => "ccswitch",
+    };
+    if let Some(old) = app.get_window("context_menu") {
+        let _ = old.eval(&format!("window.showAt({x},{y},\"{src_str}\")"));
+        return;
+    }
+    let init = format!("window.__INIT_SOURCE__=\"{src_str}\";");
+    let _ = tauri::WindowBuilder::new(
+        &window,
+        "context_menu",
+        tauri::WindowUrl::App("menu.html".into()),
+    )
+    .title("")
+    .inner_size(200.0, 140.0)
+    .position(x, y)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .resizable(false)
+    .skip_taskbar(true)
+    .focused(true)
+    .initialization_script(&init)
+    .build();
+}
+
 fn main() {
     let show = CustomMenuItem::new("show".to_string(), "Show / Hide");
     let refresh = CustomMenuItem::new("refresh".to_string(), "Refresh");
@@ -1116,6 +1235,10 @@ fn main() {
     tauri::Builder::default()
         .manage(PinState(AtomicBool::new(true)))
         .manage(DataSourceState(Mutex::new(DataSource::LocalLogs)))
+        .manage(StatsCache {
+            local: Mutex::new(HashMap::new()),
+            ccswitch: Mutex::new(HashMap::new()),
+        })
         .manage(EdgeRuntimeState(Mutex::new(EdgeRuntime {
             suppress_until: None,
             move_generation: 0,
@@ -1139,7 +1262,13 @@ fn main() {
             settle_edge_dock,
             collapse_to_edge,
             expand_edge_dock,
-            toggle_top
+            toggle_top,
+            show_context_menu,
+            set_data_source_cmd,
+            refresh_cmd,
+            close_menu_cmd,
+            menu_action,
+            quit_app
         ])
         .setup(|app| {
             let window = app
@@ -1149,6 +1278,7 @@ fn main() {
                 let _ = window.set_position(PhysicalPosition::new(state.x, state.y));
             }
             update_source_menu(&app.handle(), DataSource::LocalLogs);
+            let _ = app.tray_handle().set_tooltip("Token Pet");
             window.show()?;
             Ok(())
         })

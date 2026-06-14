@@ -31,7 +31,11 @@
           <button class="tab-btn active" data-period="today">今日</button>
           <button class="tab-btn" data-period="7d">7日</button>
           <button class="tab-btn" data-period="30d">30日</button>
+          <button class="tab-btn" data-period="all">全部</button>
         </div>
+        <select class="model-select" id="modelSelect" aria-label="按模型筛选">
+          <option value="all">全部模型</option>
+        </select>
         <div class="token-row" data-tauri-drag-region>
           <span class="token-value" id="tokenValue">0</span>
           <span class="token-label">Token</span>

@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     env, fs,
     io::{BufRead, BufReader},
     path::PathBuf,
@@ -20,10 +20,19 @@ use tauri::{
     AppHandle, CustomMenuItem, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State,
     SystemTray, SystemTrayEvent, SystemTrayMenu, Window, WindowEvent,
 };
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::HWND as WinHwnd,
+    UI::WindowsAndMessaging::{
+        AppendMenuW, CreatePopupMenu, DestroyMenu, SetForegroundWindow, TrackPopupMenu, MF_CHECKED,
+        MF_SEPARATOR, MF_STRING, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    },
+};
 
 struct PinState(AtomicBool);
 struct DataSourceState(Mutex<DataSource>);
 struct EdgeRuntimeState(Mutex<EdgeRuntime>);
+struct LocalUsageCacheState(Mutex<LocalUsageCache>);
 
 const EXPANDED_SIZE: (f64, f64) = (192.0, 284.0);
 const COMPACT_SIZE: (f64, f64) = (192.0, 78.0);
@@ -33,11 +42,31 @@ const EDGE_CURSOR_SNAP_DISTANCE: i32 = 8;
 const SCREEN_PADDING: i32 = 8;
 const EDGE_MOVE_SUPPRESS_MS: u64 = 900;
 const EDGE_MOVE_SETTLE_MS: u64 = 180;
+const LOCAL_USAGE_CACHE_TTL: Duration = Duration::from_secs(30);
+#[cfg(windows)]
+const MENU_SHOW_HIDE: u32 = 1;
+#[cfg(windows)]
+const MENU_REFRESH: u32 = 2;
+#[cfg(windows)]
+const MENU_SOURCE_LOCAL: u32 = 3;
+#[cfg(windows)]
+const MENU_SOURCE_CCSWITCH: u32 = 4;
+#[cfg(windows)]
+const MENU_QUIT: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DataSource {
     LocalLogs,
     CcSwitch,
+}
+
+impl DataSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            DataSource::LocalLogs => "local",
+            DataSource::CcSwitch => "ccswitch",
+        }
+    }
 }
 
 #[derive(Default)]
@@ -62,6 +91,28 @@ struct UsageStats {
     request_count: i64,
     total_cost_usd: f64,
     success_rate: f64,
+}
+
+#[derive(Clone)]
+struct UsageRecord {
+    ts: i64,
+    model: Option<String>,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_tokens: i64,
+}
+
+#[derive(Clone)]
+struct LocalUsageSnapshot {
+    source_path: String,
+    records: Vec<UsageRecord>,
+    models: Vec<String>,
+}
+
+#[derive(Default)]
+struct LocalUsageCache {
+    loaded_at: Option<Instant>,
+    snapshot: Option<LocalUsageSnapshot>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -115,7 +166,7 @@ fn save_window_state(app: &AppHandle, position: PhysicalPosition<i32>) {
 
 fn refresh_window(app: &AppHandle) {
     if let Some(window) = app.get_window("main") {
-        let _ = window.eval("refreshStats()");
+        let _ = window.eval("window.refreshDashboard?.()");
     }
 }
 
@@ -144,6 +195,18 @@ fn set_data_source(app: &AppHandle, next: DataSource) {
     }
     update_source_menu(app, next);
     refresh_window(app);
+}
+
+#[cfg(windows)]
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(windows)]
+unsafe fn append_native_menu_item(menu: isize, id: u32, label: &str, checked: bool) {
+    let label = wide_null(label);
+    let checked_flag = if checked { MF_CHECKED } else { 0 };
+    AppendMenuW(menu, MF_STRING | checked_flag, id as usize, label.as_ptr());
 }
 
 fn find_db() -> PathBuf {
@@ -179,7 +242,9 @@ fn find_db() -> PathBuf {
 }
 
 fn format_tokens(value: i64) -> String {
-    if value >= 1_000_000 {
+    if value >= 1_000_000_000 {
+        format!("{:.2}B", value as f64 / 1_000_000_000.0)
+    } else if value >= 1_000_000 {
         format!("{:.2}M", value as f64 / 1_000_000.0)
     } else if value >= 10_000 {
         format!("{:.1}K", value as f64 / 1_000.0)
@@ -188,14 +253,16 @@ fn format_tokens(value: i64) -> String {
     }
 }
 
-fn period_bounds(period: &str) -> Result<(i64, i64), String> {
+fn period_bounds(period: &str) -> Result<(Option<i64>, i64), String> {
     let now = Local::now();
     let end_ts = now.timestamp();
 
     let days = match period {
+        "all" => return Ok((None, end_ts)),
+        "today" => 0,
         "7d" => 7,
         "30d" => 30,
-        _ => 0, // today: 0 days ago = today 00:00
+        _ => return Err(format!("unsupported period: {period}")),
     };
 
     let start = if days == 0 {
@@ -214,7 +281,21 @@ fn period_bounds(period: &str) -> Result<(i64, i64), String> {
         .ok_or_else(|| "failed to resolve local start time".to_string())?
         .timestamp();
 
-    Ok((start_ts, end_ts))
+    Ok((Some(start_ts), end_ts))
+}
+
+fn normalize_model_filter(model: Option<String>) -> Option<String> {
+    model
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "all")
+}
+
+fn model_matches(actual: Option<&str>, filter: Option<&str>) -> bool {
+    let Some(filter) = filter else {
+        return true;
+    };
+
+    actual.is_some_and(|model| model.eq_ignore_ascii_case(filter))
 }
 
 fn stats_from_totals(source_path: String, totals: UsageTotals) -> UsageStats {
@@ -238,13 +319,14 @@ fn stats_from_totals(source_path: String, totals: UsageTotals) -> UsageStats {
     }
 }
 
-fn get_ccswitch_stats(period: &str) -> Result<UsageStats, String> {
+fn get_ccswitch_stats(period: &str, model: Option<String>) -> Result<UsageStats, String> {
     let db_path = find_db();
     if !db_path.exists() {
         return Err(format!("cc-switch db not found: {}", db_path.display()));
     }
 
     let (start_ts, end_ts) = period_bounds(&period)?;
+    let model_filter = normalize_model_filter(model);
     let conn = Connection::open_with_flags(
         &db_path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
@@ -269,7 +351,8 @@ fn get_ccswitch_stats(period: &str) -> Result<UsageStats, String> {
           COALESCE(SUM(l.cache_read_tokens), 0) AS cache_read_tokens,
           COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) AS success_count
       FROM proxy_request_logs l
-      WHERE l.created_at BETWEEN ?1 AND ?2
+      WHERE (?1 IS NULL OR l.created_at BETWEEN ?1 AND ?2)
+        AND (?3 IS NULL OR LOWER(l.model) = LOWER(?3))
         AND NOT (
           COALESCE(l.data_source, 'proxy') IN ('session_log', 'codex_session', 'gemini_session')
           AND EXISTS (
@@ -310,7 +393,7 @@ fn get_ccswitch_stats(period: &str) -> Result<UsageStats, String> {
         cache_read,
         success_count,
     ): (i64, f64, i64, i64, i64, i64, i64) = stmt
-        .query_row(params![start_ts, end_ts], |row| {
+        .query_row(params![start_ts, end_ts, model_filter.as_deref()], |row| {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
@@ -334,6 +417,44 @@ fn get_ccswitch_stats(period: &str) -> Result<UsageStats, String> {
             success_count,
         },
     ))
+}
+
+fn get_ccswitch_models(period: &str) -> Result<Vec<String>, String> {
+    let db_path = find_db();
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let (start_ts, end_ts) = period_bounds(period)?;
+    let conn = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )
+    .map_err(|error| error.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT DISTINCT TRIM(model)
+            FROM proxy_request_logs
+            WHERE (?1 IS NULL OR created_at BETWEEN ?1 AND ?2)
+              AND model IS NOT NULL
+              AND TRIM(model) != ''
+            ORDER BY LOWER(TRIM(model))
+            "#,
+        )
+        .map_err(|error| error.to_string())?;
+
+    let rows = stmt
+        .query_map(params![start_ts, end_ts], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    let mut models = Vec::new();
+    for row in rows {
+        if let Ok(model) = row {
+            models.push(model);
+        }
+    }
+    Ok(models)
 }
 
 fn collect_jsonl_files(root: PathBuf, files: &mut Vec<PathBuf>) {
@@ -362,19 +483,49 @@ fn int_field(value: &Value, key: &str) -> i64 {
     value.get(key).and_then(Value::as_i64).unwrap_or(0)
 }
 
-fn add_codex_usage(
+fn string_field<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    for key in keys {
+        if let Some(value) = value.get(*key).and_then(Value::as_str) {
+            if !value.trim().is_empty() {
+                return Some(value.trim());
+            }
+        }
+    }
+    None
+}
+
+fn codex_model(value: &Value) -> Option<&str> {
+    let payload = &value["payload"];
+    string_field(&payload["info"], &["model", "model_slug"])
+        .or_else(|| string_field(payload, &["model"]))
+        .or_else(|| string_field(value, &["model"]))
+}
+
+fn claude_model(value: &Value) -> Option<&str> {
+    string_field(&value["message"], &["model"]).or_else(|| string_field(value, &["model"]))
+}
+
+fn local_log_files() -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+    let home = dirs::home_dir().ok_or_else(|| "home directory not found".to_string())?;
+
+    let mut codex_files = Vec::new();
+    collect_jsonl_files(home.join(".codex").join("sessions"), &mut codex_files);
+
+    let mut claude_files = Vec::new();
+    collect_jsonl_files(home.join(".claude").join("projects"), &mut claude_files);
+
+    Ok((codex_files, claude_files))
+}
+
+fn add_codex_usage_record(
     value: &Value,
-    totals: &mut UsageTotals,
+    records: &mut Vec<UsageRecord>,
     seen: &mut HashSet<String>,
-    start_ts: i64,
-    end_ts: i64,
+    file_model: Option<&str>,
 ) {
     let Some(ts) = parse_timestamp(value) else {
         return;
     };
-    if ts < start_ts || ts > end_ts {
-        return;
-    }
 
     let payload = &value["payload"];
     if payload.get("type").and_then(Value::as_str) != Some("token_count") {
@@ -395,26 +546,23 @@ fn add_codex_usage(
         return;
     }
 
-    totals.input_tokens += (input_tokens - cached_input_tokens).max(0);
-    totals.cache_tokens += cached_input_tokens;
-    totals.output_tokens += output_tokens;
-    totals.request_count += 1;
-    totals.success_count += 1;
+    records.push(UsageRecord {
+        ts,
+        model: codex_model(value).or(file_model).map(ToString::to_string),
+        input_tokens: (input_tokens - cached_input_tokens).max(0),
+        output_tokens,
+        cache_tokens: cached_input_tokens,
+    });
 }
 
-fn add_claude_usage(
+fn add_claude_usage_record(
     value: &Value,
-    totals: &mut UsageTotals,
+    records: &mut Vec<UsageRecord>,
     seen: &mut HashSet<String>,
-    start_ts: i64,
-    end_ts: i64,
 ) {
     let Some(ts) = parse_timestamp(value) else {
         return;
     };
-    if ts < start_ts || ts > end_ts {
-        return;
-    }
 
     let message = &value["message"];
     if message.get("role").and_then(Value::as_str) != Some("assistant") {
@@ -463,75 +611,151 @@ fn add_claude_usage(
         return;
     }
 
-    totals.input_tokens += input_tokens;
-    totals.cache_tokens += cache_creation_tokens + cache_read_tokens;
-    totals.output_tokens += output_tokens;
-    totals.request_count += 1;
-    totals.success_count += 1;
+    records.push(UsageRecord {
+        ts,
+        model: claude_model(value).map(ToString::to_string),
+        input_tokens,
+        output_tokens,
+        cache_tokens: cache_creation_tokens + cache_read_tokens,
+    });
 }
 
-fn scan_jsonl_files(
-    files: &[PathBuf],
-    totals: &mut UsageTotals,
-    seen: &mut HashSet<String>,
-    start_ts: i64,
-    end_ts: i64,
-    add_usage: fn(&Value, &mut UsageTotals, &mut HashSet<String>, i64, i64),
-) {
-    for path in files {
+fn collect_local_usage_snapshot() -> Result<LocalUsageSnapshot, String> {
+    let (codex_files, claude_files) = local_log_files()?;
+    let mut records = Vec::new();
+    let mut codex_seen = HashSet::new();
+    let mut claude_seen = HashSet::new();
+    let mut models = BTreeSet::new();
+
+    for path in &codex_files {
+        let Ok(file) = fs::File::open(path) else {
+            continue;
+        };
+        let reader = BufReader::new(file);
+        let mut file_model: Option<String> = None;
+        for line in reader.lines().flatten() {
+            if !line.contains("usage") && !line.contains("token_count") && !line.contains("model") {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(&line) {
+                if let Some(model) = codex_model(&value) {
+                    file_model = Some(model.to_string());
+                    models.insert(model.to_string());
+                }
+                add_codex_usage_record(
+                    &value,
+                    &mut records,
+                    &mut codex_seen,
+                    file_model.as_deref(),
+                );
+            }
+        }
+    }
+
+    for path in &claude_files {
         let Ok(file) = fs::File::open(path) else {
             continue;
         };
         let reader = BufReader::new(file);
         for line in reader.lines().flatten() {
-            if !line.contains("usage") && !line.contains("token_count") {
+            if !line.contains("usage") {
                 continue;
             }
             if let Ok(value) = serde_json::from_str::<Value>(&line) {
-                add_usage(&value, totals, seen, start_ts, end_ts);
+                if let Some(model) = claude_model(&value) {
+                    models.insert(model.to_string());
+                }
+                add_claude_usage_record(&value, &mut records, &mut claude_seen);
             }
         }
     }
-}
 
-fn get_local_log_stats(period: &str) -> Result<UsageStats, String> {
-    let (start_ts, end_ts) = period_bounds(period)?;
-    let home = dirs::home_dir().ok_or_else(|| "home directory not found".to_string())?;
-
-    let mut codex_files = Vec::new();
-    collect_jsonl_files(home.join(".codex").join("sessions"), &mut codex_files);
-
-    let mut claude_files = Vec::new();
-    collect_jsonl_files(home.join(".claude").join("projects"), &mut claude_files);
-
-    let mut totals = UsageTotals::default();
-    let mut codex_seen = HashSet::new();
-    let mut claude_seen = HashSet::new();
-    scan_jsonl_files(
-        &codex_files,
-        &mut totals,
-        &mut codex_seen,
-        start_ts,
-        end_ts,
-        add_codex_usage,
-    );
-    scan_jsonl_files(
-        &claude_files,
-        &mut totals,
-        &mut claude_seen,
-        start_ts,
-        end_ts,
-        add_claude_usage,
-    );
-
-    Ok(stats_from_totals(
-        format!(
+    Ok(LocalUsageSnapshot {
+        source_path: format!(
             "local logs: {} Codex files, {} Claude files",
             codex_files.len(),
             claude_files.len()
         ),
-        totals,
-    ))
+        records,
+        models: models.into_iter().collect(),
+    })
+}
+
+fn cached_local_usage(cache: &LocalUsageCacheState) -> Result<LocalUsageSnapshot, String> {
+    let mut cache = cache
+        .0
+        .lock()
+        .map_err(|_| "failed to lock local usage cache".to_string())?;
+
+    if let (Some(loaded_at), Some(snapshot)) = (cache.loaded_at, cache.snapshot.as_ref()) {
+        if loaded_at.elapsed() < LOCAL_USAGE_CACHE_TTL {
+            return Ok(snapshot.clone());
+        }
+    }
+
+    let snapshot = collect_local_usage_snapshot()?;
+    cache.loaded_at = Some(Instant::now());
+    cache.snapshot = Some(snapshot.clone());
+    Ok(snapshot)
+}
+
+fn totals_from_records(
+    records: &[UsageRecord],
+    start_ts: Option<i64>,
+    end_ts: i64,
+    model: Option<String>,
+) -> UsageTotals {
+    let model_filter = normalize_model_filter(model);
+    let mut totals = UsageTotals::default();
+
+    for record in records {
+        if start_ts.is_some_and(|start_ts| record.ts < start_ts) || record.ts > end_ts {
+            continue;
+        }
+        if !model_matches(record.model.as_deref(), model_filter.as_deref()) {
+            continue;
+        }
+
+        totals.input_tokens += record.input_tokens;
+        totals.output_tokens += record.output_tokens;
+        totals.cache_tokens += record.cache_tokens;
+        totals.request_count += 1;
+        totals.success_count += 1;
+    }
+
+    totals
+}
+
+fn get_local_log_stats(
+    period: &str,
+    model: Option<String>,
+    cache: &LocalUsageCacheState,
+) -> Result<UsageStats, String> {
+    let (start_ts, end_ts) = period_bounds(period)?;
+    let snapshot = cached_local_usage(cache)?;
+    let totals = totals_from_records(&snapshot.records, start_ts, end_ts, model);
+    Ok(stats_from_totals(snapshot.source_path, totals))
+}
+
+fn get_local_log_models(period: &str, cache: &LocalUsageCacheState) -> Result<Vec<String>, String> {
+    let (start_ts, end_ts) = period_bounds(period)?;
+    let snapshot = cached_local_usage(cache)?;
+    let mut models = BTreeSet::new();
+
+    for record in &snapshot.records {
+        if start_ts.is_some_and(|start_ts| record.ts < start_ts) || record.ts > end_ts {
+            continue;
+        }
+        if let Some(model) = &record.model {
+            models.insert(model.clone());
+        }
+    }
+
+    if models.is_empty() {
+        Ok(snapshot.models)
+    } else {
+        Ok(models.into_iter().collect())
+    }
 }
 
 fn window_logical_size(compact: bool) -> LogicalSize<f64> {
@@ -814,16 +1038,133 @@ fn edge_from_cursor_or_window(
 }
 
 #[tauri::command]
-fn get_stats(period: String, source: State<'_, DataSourceState>) -> Result<UsageStats, String> {
+fn get_stats(
+    period: String,
+    model: Option<String>,
+    source: State<'_, DataSourceState>,
+    local_cache: State<'_, LocalUsageCacheState>,
+) -> Result<UsageStats, String> {
     let data_source = *source
         .0
         .lock()
         .map_err(|_| "failed to lock data source".to_string())?;
 
     match data_source {
-        DataSource::LocalLogs => get_local_log_stats(&period),
-        DataSource::CcSwitch => get_ccswitch_stats(&period),
+        DataSource::LocalLogs => get_local_log_stats(&period, model, &local_cache),
+        DataSource::CcSwitch => get_ccswitch_stats(&period, model),
     }
+}
+
+#[tauri::command]
+fn get_models(
+    period: String,
+    source: State<'_, DataSourceState>,
+    local_cache: State<'_, LocalUsageCacheState>,
+) -> Result<Vec<String>, String> {
+    let data_source = *source
+        .0
+        .lock()
+        .map_err(|_| "failed to lock data source".to_string())?;
+
+    match data_source {
+        DataSource::LocalLogs => get_local_log_models(&period, &local_cache),
+        DataSource::CcSwitch => get_ccswitch_models(&period),
+    }
+}
+
+#[tauri::command]
+fn get_data_source(source: State<'_, DataSourceState>) -> Result<String, String> {
+    let data_source = *source
+        .0
+        .lock()
+        .map_err(|_| "failed to lock data source".to_string())?;
+    Ok(data_source.as_str().to_string())
+}
+
+#[tauri::command]
+fn set_data_source_from_window(app: AppHandle, source: String) -> Result<String, String> {
+    let next = match source.as_str() {
+        "local" => DataSource::LocalLogs,
+        "ccswitch" => DataSource::CcSwitch,
+        _ => return Err(format!("unsupported data source: {source}")),
+    };
+
+    set_data_source(&app, next);
+    Ok(next.as_str().to_string())
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn show_native_context_menu(
+    app: AppHandle,
+    window: Window,
+    client_x: f64,
+    client_y: f64,
+    source: State<'_, DataSourceState>,
+) -> Result<(), String> {
+    let current_source = *source
+        .0
+        .lock()
+        .map_err(|_| "failed to lock data source".to_string())?;
+    let hwnd: WinHwnd = window.hwnd().map_err(|error| error.to_string())?.0;
+    let window_position = window.outer_position().map_err(|error| error.to_string())?;
+    let scale_factor = window.scale_factor().map_err(|error| error.to_string())?;
+    let x = window_position.x + (client_x * scale_factor).round() as i32;
+    let y = window_position.y + (client_y * scale_factor).round() as i32;
+    let menu = unsafe { CreatePopupMenu() };
+    if menu == 0 {
+        return Err("failed to create native context menu".to_string());
+    }
+
+    unsafe {
+        append_native_menu_item(menu, MENU_SHOW_HIDE, "Show / Hide", false);
+        append_native_menu_item(menu, MENU_REFRESH, "Refresh", false);
+        AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+        append_native_menu_item(
+            menu,
+            MENU_SOURCE_LOCAL,
+            "Local Codex/Claude",
+            current_source == DataSource::LocalLogs,
+        );
+        append_native_menu_item(
+            menu,
+            MENU_SOURCE_CCSWITCH,
+            "cc-switch",
+            current_source == DataSource::CcSwitch,
+        );
+        AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+        append_native_menu_item(menu, MENU_QUIT, "Quit", false);
+
+        SetForegroundWindow(hwnd);
+        let command = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            x,
+            y,
+            0,
+            hwnd,
+            std::ptr::null(),
+        ) as u32;
+        DestroyMenu(menu);
+
+        match command {
+            MENU_SHOW_HIDE => {
+                let _ = window.hide();
+            }
+            MENU_REFRESH => refresh_window(&app),
+            MENU_SOURCE_LOCAL => set_data_source(&app, DataSource::LocalLogs),
+            MENU_SOURCE_CCSWITCH => set_data_source(&app, DataSource::CcSwitch),
+            MENU_QUIT => app.exit(0),
+            _ => {}
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1116,6 +1457,7 @@ fn main() {
     tauri::Builder::default()
         .manage(PinState(AtomicBool::new(true)))
         .manage(DataSourceState(Mutex::new(DataSource::LocalLogs)))
+        .manage(LocalUsageCacheState(Mutex::new(LocalUsageCache::default())))
         .manage(EdgeRuntimeState(Mutex::new(EdgeRuntime {
             suppress_until: None,
             move_generation: 0,
@@ -1129,6 +1471,11 @@ fn main() {
         .system_tray(tray)
         .invoke_handler(tauri::generate_handler![
             get_stats,
+            get_models,
+            get_data_source,
+            set_data_source_from_window,
+            quit_app,
+            show_native_context_menu,
             begin_edge_drag,
             drag_move_window,
             finish_edge_drag,

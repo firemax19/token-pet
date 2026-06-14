@@ -157,6 +157,8 @@ body {
   display: flex;
   align-items: baseline;
   gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .token-value {
@@ -190,8 +192,8 @@ body {
 
 .tab-row {
   display: flex;
-  gap: 6px;
-  margin-bottom: 10px;
+  gap: 4px;
+  margin-bottom: 7px;
   pointer-events: auto;
 }
 
@@ -206,6 +208,29 @@ body {
   font-family: inherit;
   cursor: pointer;
   transition: all 140ms ease;
+}
+
+.model-select {
+  width: 100%;
+  height: 23px;
+  margin-bottom: 8px;
+  padding: 0 19px 0 8px;
+  border: 1px solid rgba(82, 246, 255, 0.34);
+  border-radius: 8px;
+  background: rgba(4, 18, 36, 0.76);
+  color: rgba(226, 245, 255, 0.88);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  outline: none;
+  pointer-events: auto;
+}
+
+.model-select:hover,
+.model-select:focus {
+  border-color: rgba(82, 246, 255, 0.72);
+  color: var(--cyan);
+  box-shadow: 0 0 8px rgba(82, 246, 255, 0.24);
 }
 
 .tab-btn:hover {
@@ -350,44 +375,60 @@ body {
 
 .pet-card.is-compact .content {
   display: grid;
-  grid-template-columns: 102px;
-  grid-template-rows: 17px 29px 14px;
+  grid-template-columns: 116px;
+  grid-template-rows: 17px 17px 23px;
   align-items: center;
   height: 100%;
-  padding: 5px 52px 2px 8px;
+  padding: 5px 44px 2px 8px;
 }
 
 .pet-card.is-compact .tab-row {
   grid-column: 1;
   grid-row: 1;
   gap: 3px;
-  width: 72px;
+  width: 92px;
   margin: 0;
 }
 
 .pet-card.is-compact .tab-btn {
-  min-width: 21px;
+  min-width: 20px;
   height: 14px;
   padding: 0;
   border-radius: 7px;
-  font-size: 7px;
+  font-size: 6.5px;
   font-weight: 700;
+}
+
+.pet-card.is-compact .model-select {
+  grid-column: 1;
+  grid-row: 2;
+  width: 92px;
+  height: 15px;
+  margin: 0;
+  padding: 0 12px 0 5px;
+  border-radius: 6px;
+  font-size: 7px;
 }
 
 .pet-card.is-compact .token-row {
   grid-column: 1;
-  grid-row: 2;
-  gap: 4px;
+  grid-row: 3;
+  gap: 3px;
   align-self: end;
+  max-width: 116px;
 }
 
 .pet-card.is-compact .token-value {
-  font-size: 25px;
+  max-width: 92px;
+  overflow: hidden;
+  font-size: 21px;
   letter-spacing: 0;
+  text-overflow: clip;
 }
 
 .pet-card.is-compact .token-label {
-  font-size: 7px;
+  font-size: 6px;
+  line-height: 1;
 }
 
 .pet-card.is-compact .sub-row {
@@ -491,6 +532,7 @@ body {
 }
 
 .pet-card.is-edge-docked .tab-row,
+.pet-card.is-edge-docked .model-select,
 .pet-card.is-edge-docked .sub-row,
 .pet-card.is-edge-docked .small-stat {
   display: none;
@@ -499,10 +541,11 @@ body {
 .pet-card.is-edge-docked .token-row {
   position: absolute;
   left: 50%;
-  top: 41%;
+  top: 38%;
   display: flex;
   align-items: baseline;
   gap: 2px;
+  max-width: 103px;
   width: max-content;
   transform: rotate(90deg);
   transform-origin: center;
@@ -510,11 +553,15 @@ body {
 }
 
 .pet-card.is-edge-docked .token-value {
-  font-size: 15px;
+  max-width: 82px;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: clip;
 }
 
 .pet-card.is-edge-docked .token-label {
-  font-size: 6px;
+  font-size: 5px;
+  line-height: 1;
 }
 
 .pet-card.is-edge-docked .mascot-panel {

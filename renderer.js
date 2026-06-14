@@ -7,9 +7,11 @@ const layoutButton = document.getElementById("layoutButton");
 const mascotLayer = document.getElementById("mascotLayer");
 const petCard = document.querySelector(".pet-card");
 const tabButtons = document.querySelectorAll(".tab-btn");
+const modelSelect = document.getElementById("modelSelect");
 
 const invoke = window.__TAURI__.tauri.invoke;
 const appWindow = window.__TAURI__.window?.appWindow;
+const REFRESH_INTERVAL_MS = 30000;
 
 let isPinned = true;
 let isCompact = localStorage.getItem("tokenPetLayout") === "compact";
@@ -22,6 +24,8 @@ let dragFinalizeTimer = 0;
 let manualDrag = null;
 let dragMoveFrame = 0;
 let currentPeriod = "today";
+let currentModel = "all";
+let refreshGeneration = 0;
 pinButton.classList.add("is-active");
 
 function formatCost(value) {
@@ -83,23 +87,11 @@ function loadMascot() {
 
 async function refreshStats() {
   try {
-    const stats = await invoke("get_stats", { period: currentPeriod });
-    const oldValue = tokenValue.textContent;
-    const newValue = stats.totalTokensText;
-
-    // Spin refresh icon
-    refreshButton.classList.add("is-spinning");
-    window.setTimeout(() => refreshButton.classList.remove("is-spinning"), 300);
-
-    // Update values
-    tokenValue.textContent = newValue;
-    smallStat.innerHTML = `${stats.requestCount} \u6b21\u8bf7\u6c42&nbsp;&nbsp;${formatCost(stats.totalCostUsd)}<br>${Math.round(stats.successRate)}% \u6210\u529f`;
-
-    // Animate token value if changed
-    if (oldValue !== newValue) {
-      tokenValue.classList.add("animating");
-      window.setTimeout(() => tokenValue.classList.remove("animating"), 300);
-    }
+    const stats = await invoke("get_stats", {
+      period: currentPeriod,
+      model: currentModel === "all" ? null : currentModel,
+    });
+    applyStats(stats);
   } catch (error) {
     tokenValue.textContent = "0";
     smallStat.textContent = "\u8bfb\u53d6\u5931\u8d25";
@@ -107,6 +99,94 @@ async function refreshStats() {
 }
 
 window.refreshStats = refreshStats;
+
+async function refreshModels() {
+  if (!modelSelect) return;
+
+  try {
+    const models = await invoke("get_models", { period: currentPeriod });
+    const previousModel = currentModel;
+
+    modelSelect.innerHTML = "";
+    const allOption = document.createElement("option");
+    allOption.value = "all";
+    allOption.textContent = "\u5168\u90e8\u6a21\u578b";
+    modelSelect.appendChild(allOption);
+
+    models.forEach(model => {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      modelSelect.appendChild(option);
+    });
+
+    currentModel = models.includes(previousModel) ? previousModel : "all";
+    modelSelect.value = currentModel;
+  } catch (error) {
+    modelSelect.innerHTML = '<option value="all">\u5168\u90e8\u6a21\u578b</option>';
+    currentModel = "all";
+  }
+}
+
+window.refreshModels = refreshModels;
+
+async function refreshDashboard() {
+  const generation = ++refreshGeneration;
+  const statsModel = currentModel === "all" ? null : currentModel;
+
+  try {
+    const [models, initialStats] = await Promise.all([
+      invoke("get_models", { period: currentPeriod }),
+      invoke("get_stats", { period: currentPeriod, model: statsModel }),
+    ]);
+    if (generation !== refreshGeneration) return;
+
+    const previousModel = currentModel;
+    modelSelect.innerHTML = "";
+    const allOption = document.createElement("option");
+    allOption.value = "all";
+    allOption.textContent = "\u5168\u90e8\u6a21\u578b";
+    modelSelect.appendChild(allOption);
+
+    models.forEach(model => {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      modelSelect.appendChild(option);
+    });
+
+    currentModel = models.includes(previousModel) ? previousModel : "all";
+    modelSelect.value = currentModel;
+
+    const stats = statsModel && currentModel === "all"
+      ? await invoke("get_stats", { period: currentPeriod, model: null })
+      : initialStats;
+    if (generation !== refreshGeneration) return;
+
+    applyStats(stats);
+  } catch (error) {
+    tokenValue.textContent = "0";
+    smallStat.textContent = "\u8bfb\u53d6\u5931\u8d25";
+  }
+}
+
+window.refreshDashboard = refreshDashboard;
+
+function applyStats(stats) {
+  const oldValue = tokenValue.textContent;
+  const newValue = stats.totalTokensText;
+
+  refreshButton.classList.add("is-spinning");
+  window.setTimeout(() => refreshButton.classList.remove("is-spinning"), 300);
+
+  tokenValue.textContent = newValue;
+  smallStat.innerHTML = `${stats.requestCount} \u6b21\u8bf7\u6c42&nbsp;&nbsp;${formatCost(stats.totalCostUsd)}<br>${Math.round(stats.successRate)}% \u6210\u529f`;
+
+  if (oldValue !== newValue) {
+    tokenValue.classList.add("animating");
+    window.setTimeout(() => tokenValue.classList.remove("animating"), 300);
+  }
+}
 
 function finalizeEdgeDrag() {
   window.clearTimeout(dragFinalizeTimer);
@@ -118,7 +198,7 @@ function finalizeEdgeDrag() {
 
 async function startWindowDrag(event) {
   if (event.button !== 0 && event.pointerType !== "touch") return;
-  if (event.target.closest(".tools, button, .tab-btn")) return;
+  if (event.target.closest(".tools, button, .tab-btn, .model-select")) return;
 
   event.preventDefault();
   window.clearTimeout(collapseTimer);
@@ -194,14 +274,27 @@ async function settleEdgeDock() {
   setEdgeDockState(Boolean(state.docked), state.edge || null);
 }
 
+function showContextMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  invoke("show_native_context_menu", {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  }).catch(() => {});
+}
+
 refreshButton.addEventListener("click", refreshStats);
 tabButtons.forEach(btn => {
   btn.addEventListener("click", () => {
     tabButtons.forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     currentPeriod = btn.dataset.period;
-    refreshStats();
+    refreshDashboard();
   });
+});
+modelSelect?.addEventListener("change", () => {
+  currentModel = modelSelect.value;
+  refreshStats();
 });
 pinButton.addEventListener("click", async () => {
   const nextPinned = await invoke("toggle_top");
@@ -209,15 +302,10 @@ pinButton.addEventListener("click", async () => {
 });
 minimizeButton.addEventListener("click", () => invoke("hide_window"));
 layoutButton.addEventListener("click", () => applyWindowLayout(!isCompact));
+document.addEventListener("contextmenu", showContextMenu, true);
 
 applyWindowLayout(isCompact);
 setPinState(true);
 loadMascot();
-refreshStats();
-setInterval(refreshStats, 30000);
-
-// --- Right-click: show popup menu window at cursor ---
-document.addEventListener("contextmenu", (e) => {
-  e.preventDefault();
-  invoke("show_context_menu", { x: e.screenX, y: e.screenY });
-});
+refreshDashboard();
+setInterval(refreshStats, REFRESH_INTERVAL_MS);

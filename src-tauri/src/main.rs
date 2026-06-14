@@ -79,7 +79,7 @@ struct UsageTotals {
     success_count: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UsageStats {
     db_path: String,
@@ -195,6 +195,13 @@ fn set_data_source(app: &AppHandle, next: DataSource) {
     }
     update_source_menu(app, next);
     refresh_window(app);
+    if let Some(menu_win) = app.get_window("context_menu") {
+        let src_str = match next {
+            DataSource::LocalLogs => "local",
+            DataSource::CcSwitch => "ccswitch",
+        };
+        let _ = menu_win.eval(&format!("window.updateMarkers(\"{src_str}\")"));
+    }
 }
 
 #[cfg(windows)]
@@ -1070,6 +1077,8 @@ fn get_models(
         DataSource::LocalLogs => get_local_log_models(&period, &local_cache),
         DataSource::CcSwitch => get_ccswitch_models(&period),
     }
+
+    Ok(stats)
 }
 
 #[tauri::command]
@@ -1439,6 +1448,90 @@ fn expand_edge_dock(
     Ok(())
 }
 
+#[tauri::command]
+fn set_data_source_cmd(app: AppHandle, source: String) -> Result<(), String> {
+    match source.as_str() {
+        "local" => {
+            set_data_source(&app, DataSource::LocalLogs);
+            Ok(())
+        }
+        "ccswitch" => {
+            set_data_source(&app, DataSource::CcSwitch);
+            Ok(())
+        }
+        _ => Err(format!("unknown source: {source}")),
+    }
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+fn refresh_cmd(app: AppHandle) {
+    refresh_window(&app);
+}
+
+#[tauri::command]
+fn close_menu_cmd(app: AppHandle) {
+    if let Some(w) = app.get_window("context_menu") {
+        let _ = w.hide();
+        let _ = w.close();
+    }
+}
+
+#[tauri::command]
+fn menu_action(app: AppHandle, action: String) {
+    match action.as_str() {
+        "refresh" => refresh_window(&app),
+        "source_local" => set_data_source(&app, DataSource::LocalLogs),
+        "source_ccswitch" => set_data_source(&app, DataSource::CcSwitch),
+        "quit" => app.exit(0),
+        _ => {}
+    }
+    if let Some(w) = app.get_window("context_menu") {
+        let _ = w.hide();
+        let _ = w.close();
+    }
+}
+
+#[tauri::command]
+async fn show_context_menu(window: Window, x: f64, y: f64) {
+    let app = window.app_handle();
+    let source = app
+        .state::<DataSourceState>()
+        .0
+        .lock()
+        .map(|s| *s)
+        .unwrap_or(DataSource::LocalLogs);
+    let src_str = match source {
+        DataSource::LocalLogs => "local",
+        DataSource::CcSwitch => "ccswitch",
+    };
+    if let Some(old) = app.get_window("context_menu") {
+        let _ = old.eval(&format!("window.showAt({x},{y},\"{src_str}\")"));
+        return;
+    }
+    let init = format!("window.__INIT_SOURCE__=\"{src_str}\";");
+    let _ = tauri::WindowBuilder::new(
+        &window,
+        "context_menu",
+        tauri::WindowUrl::App("menu.html".into()),
+    )
+    .title("")
+    .inner_size(200.0, 140.0)
+    .position(x, y)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .resizable(false)
+    .skip_taskbar(true)
+    .focused(true)
+    .initialization_script(&init)
+    .build();
+}
+
 fn main() {
     let show = CustomMenuItem::new("show".to_string(), "Show / Hide");
     let refresh = CustomMenuItem::new("refresh".to_string(), "Refresh");
@@ -1486,7 +1579,13 @@ fn main() {
             settle_edge_dock,
             collapse_to_edge,
             expand_edge_dock,
-            toggle_top
+            toggle_top,
+            show_context_menu,
+            set_data_source_cmd,
+            refresh_cmd,
+            close_menu_cmd,
+            menu_action,
+            quit_app
         ])
         .setup(|app| {
             let window = app
@@ -1496,6 +1595,7 @@ fn main() {
                 let _ = window.set_position(PhysicalPosition::new(state.x, state.y));
             }
             update_source_menu(&app.handle(), DataSource::LocalLogs);
+            let _ = app.tray_handle().set_tooltip("Token Pet");
             window.show()?;
             Ok(())
         })

@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    font: 12px "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  }
+  .menu {
+    display: inline-block;
+    min-width: 190px;
+    padding: 3px 0;
+    background: #2b2b2b;
+    border: 1px solid #555;
+    box-shadow: 2px 2px 6px rgba(0,0,0,.3);
+    color: #f0f0f0;
+  }
+  .item {
+    display: block;
+    width: 100%;
+    padding: 5px 24px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: default;
+    white-space: nowrap;
+  }
+  .item:hover { background: #444; }
+  .sep { height: 1px; margin: 3px 0; background: #555; }
+</style>
+</head>
+<body>
+  <div class="menu">
+    <button class="item" data-action="refresh">Refresh</button>
+    <div class="sep"></div>
+    <button class="item" data-action="source_local">[ ] Local Codex/Claude</button>
+    <button class="item" data-action="source_ccswitch">[ ] cc-switch</button>
+    <div class="sep"></div>
+    <button class="item" data-action="quit">Quit</button>
+  </div>
+  <script>
+    var invoke = window.__TAURI__.tauri.invoke;
+
+    function updateMarkers(source) {
+      var el1 = document.querySelector('[data-action="source_local"]');
+      var el2 = document.querySelector('[data-action="source_ccswitch"]');
+      if (el1) el1.textContent = (source === "local" ? "[x]" : "[ ]") + " Local Codex/Claude";
+      if (el2) el2.textContent = (source === "ccswitch" ? "[x]" : "[ ]") + " cc-switch";
+    }
+
+    window.updateMarkers = updateMarkers;
+
+    if (window.__INIT_SOURCE__) updateMarkers(window.__INIT_SOURCE__);
+
+    document.querySelectorAll(".item").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        invoke("menu_action", { action: btn.dataset.action });
+      });
+    });
+
+    document.addEventListener("mousedown", function(e) {
+      if (!e.target.closest(".menu")) invoke("close_menu_cmd");
+    });
+
+    window.addEventListener("blur", function() {
+      setTimeout(function() { invoke("close_menu_cmd"); }, 30);
+    });
+
+    setTimeout(function() { invoke("close_menu_cmd"); }, 10000);
+  </script>
+</body>
+</html>

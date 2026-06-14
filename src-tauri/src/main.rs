@@ -1077,8 +1077,6 @@ fn get_models(
         DataSource::LocalLogs => get_local_log_models(&period, &local_cache),
         DataSource::CcSwitch => get_ccswitch_models(&period),
     }
-
-    Ok(stats)
 }
 
 #[tauri::command]
@@ -1464,11 +1462,6 @@ fn set_data_source_cmd(app: AppHandle, source: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn quit_app(app: AppHandle) {
-    app.exit(0);
-}
-
-#[tauri::command]
 fn refresh_cmd(app: AppHandle) {
     refresh_window(&app);
 }
@@ -1584,8 +1577,7 @@ fn main() {
             set_data_source_cmd,
             refresh_cmd,
             close_menu_cmd,
-            menu_action,
-            quit_app
+            menu_action
         ])
         .setup(|app| {
             let window = app
